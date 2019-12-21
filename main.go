@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"net/http"
+	"time"
 
 	"io/ioutil"
 
@@ -59,15 +60,50 @@ func main() {
 		IdentityProviderSSOURL:      metadata.IDPSSODescriptor.SingleSignOnServices[0].Location,
 		IdentityProviderIssuer:      metadata.EntityID,
 		ServiceProviderIssuer:       "saml-test",
-		AssertionConsumerServiceURL: "https://localhost:8080/v1/_saml_callback",
+		AssertionConsumerServiceURL: "https://localhost:8080/saml/consume",
 		SignAuthnRequests:           true,
-		AudienceURI:                 "saml-test",
+		AudienceURI:                 "https://localhost:8080/saml/metadata",
 		IDPCertificateStore:         &certStore,
 		SPKeyStore:                  randomKeyStore,
 		AllowMissingAttributes:      true,
 	}
 
-	http.HandleFunc("/v1/_saml_callback", func(rw http.ResponseWriter, req *http.Request) {
+	http.HandleFunc("/saml/metadata", func(rw http.ResponseWriter, req *http.Request) {
+		entity := &types.EntityDescriptor{
+			EntityID:   sp.AudienceURI,
+			ValidUntil: time.Now().UTC().Add(time.Hour * 24 * 7),
+			SPSSODescriptor: &types.SPSSODescriptor{
+				SingleLogoutServices: []types.Endpoint{
+					types.Endpoint{
+						Binding:          saml2.BindingHttpRedirect,
+						Location:         "https://localhost:8080/saml/slo",
+						ResponseLocation: "https://localhost:8080/saml/slo",
+					},
+				},
+				NameIDFormats: []string{
+					saml2.NameIdFormatEmailAddress,
+				},
+				AssertionConsumerServices: []types.IndexedEndpoint{
+					types.IndexedEndpoint{
+						Binding:  saml2.BindingHttpPost,
+						Location: sp.AssertionConsumerServiceURL,
+					},
+				},
+				ProtocolSupportEnumeration: saml2.SAMLProtocolNamespace,
+			},
+		}
+		res, err := xml.Marshal(entity)
+		if err != nil {
+			fmt.Println("ValidateEncodedResponse")
+			fmt.Println(err)
+			rw.WriteHeader(http.StatusForbidden)
+			return
+		}
+		rw.Header().Set("Content-Type", "application/xml")
+		rw.Write(res)
+	})
+
+	http.HandleFunc("/saml/consume", func(rw http.ResponseWriter, req *http.Request) {
 		fmt.Println("aaaa")
 		err := req.ParseForm()
 		if err != nil {
